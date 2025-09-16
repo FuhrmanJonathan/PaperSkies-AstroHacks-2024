@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html>
+    <script>
+        
+        let container; // set when initialized
+        let floor;
+        let speedBar;
+        let objects = [];
+        let userinput = {};
+
+        let plane;
+
+        const clouds = [
+            "images/Cloud1.png", "images/Cloud2.png", "images/Cloud3.png"
+        ]
+        const asteroids = [
+            "images/Asteroid1.png",
+        ]
+
+        let camera = {
+            "xOffset": 0,
+            "yOffset": 0,
+            "zoomScale": 0.175,
+            "shakeX": 0,
+            "shakeY": 0,
+        }
+
+        let gameplay = {
+            "cashMultiplier": 1,
+            "cash": 0,
+            "aerod": 0.05, // 0.5 -> 0.1 (/2)
+            "maxSpeed": 20, // 20 -> 90 (*2)
+            "upgradeCostSpeed": 1, 
+            "upgradeCostAero": 1,
+        }
+
+        const config = {
+            "containerWidth": 1200,
+            "containerHeight": 675,
+            "fps": 40,
+            "clouds": [-2000, 0],
+            "asteroids": [-100000000, -2000],
+        }
+
+        let lastSpawn = 0;
+        let arrowProgress = 0;
+
+        function lerp(start, end, t) {return start + (end - start) * t} 
+        function scaleToAbsolute(x, y) {return [x * config.containerWidth, y * config.containerHeight]}
+        function clamp(value, min, max) {return Math.max(min, Math.min(value, max))}
+        function sleep(ms) {return new Promise(resolve => setTimeout(resolve, ms));}
+
+        class ObjectBase {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.velocityX = 0; 
+                this.velocityY = 0; 
+                this.anchored = false;
+
+                objects.push(this);
+            }
+
+            destroy() {
+                this.element.remove();
+
+                let index = objects.indexOf(this);
+                objects.splice(index, 1);
+            }
+
+            step() {
+
+                if (this.anchored) {
+                    this.velocityX = 0;
+                    this.velocityY = 0;
+                } 
+
+                let [newX, newY] = [this.x + this.velocityX, this.y + this.velocityY];
+                let hitBottom = newY > (config.containerHeight - 100);
+
+                this.x = newX;
+                this.y = (hitBottom && this.velocityY > 0) ? (config.containerHeight - 100) : newY;
+                this.thrust = hitBottom ? Math.max(this.thrust - 2, 0) : this.thrust;
+
+                this.element.style.left = this.x - camera.xOffset + camera.shakeX + "px";
+                this.element.style.top = this.y - camera.yOffset + camera.shakeY + "px";
+                this.element.style.width = (this.width * camera.zoomScale * 2) + "px";
+                this.element.style.height = (this.height * camera.zoomScale * 2) + "px";
+                this.element.style.visibility = "visible";
+            }
+        }
+
+        class Plane extends ObjectBase {
+            constructor(x, y) {
+                super(x, y);
+                this.element = document.createElement("img");
+                this.element.className = "ObjectBase";
+                container.appendChild(this.element);
+
+                this.width = 375; 
+                this.height = 165; 
+                this.element.src = "images/Plane.png"; 
+
+                this.thrust = 0; 
+                this.gravity = 10;
+                this.rotation = 0;
+                this.lastX = 0;
+                this.lastY = 0;
+
+                this.anchored = true;
+                this.launched = false;
+                this.element.style.zIndex = 10;
+            }
+
+            applyPhysics() { 
+                let theta = this.rotation * Math.PI / 180;
+                let [unitX, unitY] = [Math.cos(theta), Math.sin(theta)];
+
+                this.velocityY = lerp(this.velocityY, clamp((this.thrust * unitY) + this.gravity, -100, 10000), 0.06);
+                this.velocityX = lerp(this.velocityX, clamp((this.thrust * unitX), 0, gameplay.maxSpeed), 0.06);
+            }
+
+            step() {
+                this.applyPhysics();
+
+                if (userinput["a"]) this.rotation -= 2;
+                if (userinput["d"]) this.rotation += 2;
+
+                let deltaX = this.lastX - this.x;
+                let deltaY = this.lastY - this.y;
+
+                this.lastX = this.x;
+                this.lastY = this.y;
+
+                let magnitude = Math.sqrt(Math.pow(deltaX, 2) + Math.pow(deltaY, 2));
+                this.thrust = lerp(this.thrust, Math.max(magnitude - 1, 0), gameplay.aerod);
+
+                this.rotation = lerp(lerp(this.rotation, clamp(this.rotation, -60, 35), 0.3), 0, 0.01);
+                this.element.style.rotate = this.rotation + "deg";
+
+                const relativeX = this.x - camera.xOffset + camera.shakeX;
+                const absoluteXLimit = scaleToAbsolute(0.2, 0)[0];
+                if (relativeX > absoluteXLimit) {
+                    camera.xOffset += this.velocityX;
+                }
+
+                const relativeY = this.y - camera.yOffset;
+                const absoluteYUpperLimit = scaleToAbsolute(0, 0.65)[1];
+                const absoluteYLowerLimit = scaleToAbsolute(0, 0.35)[1];
+
+                if (relativeY > absoluteYUpperLimit) { 
+                    camera.yOffset = Math.min(camera.yOffset + Math.max(this.velocityY, 0), 0);
+                }
+                if (relativeY < absoluteYLowerLimit) { 
+                    camera.yOffset = Math.min(camera.yOffset + Math.min(this.velocityY, 0), 0);
+                }
+
+                super.step();
+
+                updateBackground();
+
+                if (this.thrust == 0 && this.anchored == false) {
+                    gameOverSet();
+                }
+            }
+        }
+
+        class Cloud extends ObjectBase {
+            constructor(x, y) {
+                super(x, y);
+                this.element = document.createElement("img");
+                this.element.className = "ObjectBase";
+                this.element.style.visibility = "hidden";
+                container.appendChild(this.element);
+
+                this.scale = (Math.random() + 1);
+                this.moveScale = Math.round(2 * Math.random()) - 1
+                this.width = 700 * this.scale; 
+                this.height = 200 * this.scale; 
+                this.element.src = clouds[Math.round(Math.random() * (clouds.length - 1))]; 
+                this.element.style.zIndex = 10 + Math.round((Math.random() * 2) - 1);
+
+                this.anchored = false;
+            }
+            step() {
+                this.velocityX = -this.scale * this.moveScale * (plane.thrust / 10);
+                this.velocityY = 0;
+                super.step();
+            }
+        }
+
+        class Asteroid extends ObjectBase {
+            constructor(x, y) {
+                super(x, y);
+                this.element = document.createElement("img");
+                this.element.className = "ObjectBase";
+                this.element.style.visibility = "hidden";
+                container.appendChild(this.element);
+
+                this.scale = (Math.random() + 1);
+                this.moveScale = Math.round(2 * Math.random()) - 1
+                this.width = 400 * this.scale; 
+                this.height = 400 * this.scale; 
+                this.element.src = asteroids[Math.round(Math.random() * (asteroids.length - 1))]; 
+                this.element.style.zIndex = 10 + Math.round((Math.random() * 2) - 1);
+
+                this.anchored = false;
+            }
+            step() {
+                this.velocityX = -this.scale * this.moveScale * (plane.thrust / 10);
+                this.velocityY = 0;
+                super.step();
+            }
+        }
+
+        class Bush extends ObjectBase {
+            constructor(x, y) {
+                super(x, y);
+                this.element = document.createElement("img");
+                this.element.className = "ObjectBase";
+                this.element.style.visibility = "hidden";
+                container.appendChild(this.element);
+
+                this.width = 440 * 2.2; 
+                this.height = 120 * 2.2; 
+                this.element.src = "images/Bush.png"; 
+                this.element.style.zIndex = 9;
+
+                this.activated = false;
+                this.anchored = false;
+            }
+            step() {
+                super.step();
+                this.x += plane.velocityX / 2.7;
+
+                let distanceFromPlane = Math.sqrt(Math.pow(this.x - plane.x, 2) + Math.pow(this.y - plane.y, 2));
+                if (distanceFromPlane < 75 && this.activated == false) {
+                    this.activated = true;
+                    gameplay.cashMultiplier += 0.1;
+                    applyBoost(1);
+                }
+            }
+        }
+
+        class Balloon extends ObjectBase {
+            constructor(x, y) {
+                super(x, y);
+                this.element = document.createElement("img");
+                this.element.className = "ObjectBase";
+                this.element.style.visibility = "hidden";
+                container.appendChild(this.element);
+
+                this.width = 450; 
+                this.height = 550; 
+                this.element.src = "images/Balloon.png"; 
+                this.element.style.zIndex = 9;
+
+                this.activated = false;
+                this.anchored = false;
+            }
+            step() {
+                this.xVelocity = 5 * plane.xVelocity;
+                super.step();
+
+                let distanceFromPlane = Math.sqrt(Math.pow(this.x - plane.x, 2) + Math.pow(this.y - plane.y, 2));
+                if (distanceFromPlane < 75 && this.activated == false) {
+                    this.activated = true;
+                    gameplay.cashMultiplier += 0.2;
+                    applyBoost(2);
+                }
+            }
+        }
+
+        function gameOverSet() {
+            gameOver.style.visibility = "visible";
+            document.getElementById("Distance").innerHTML = Math.round(plane.x / 100).toFixed(1) + "ft";
+            document.getElementById("CashMultiplier").innerHTML = gameplay.cashMultiplier.toFixed(2);         
+
+            let earned = (Math.round(gameplay.cashMultiplier * 100) / 100) * (Math.round(plane.x / 5000));
+            document.getElementById("Cash").innerHTML = "€ " + earned.toFixed(0);
+            gameplay.cash += Number(earned.toFixed(1));
+            plane.anchored = true;
+        }
+
+        function upgradeMaxSpeed() {
+            gameplay.maxSpeed += 5;
+            gameplay.upgradeCostSpeed *= 2;
+        }
+
+        function upgradeAerod() {
+            gameplay.aerod /= 2;
+            gameplay.upgradeCostAero *= 2;
+        }
+
+        function restart() {
+            plane.launched = false;
+            plane.anchored = true;
+            camera.xOffset = 0;
+            camera.yOffset = 0;
+            plane.x = 50;
+            plane.y = config.containerHeight / 2;
+            gameplay.cashMultiplier = 1;
+            gameOver.style.visibility = "hidden";
+            speedBar.style.visibility = "visible";
+            objects.forEach((object) => {
+                if (object != plane) {
+                    object.destroy();
+                }
+            });
+        }
+
+        function applyBoost(multiplier) {
+            plane.rotation += -30;
+            plane.thrust += 30 * multiplier;
+            plane.velocityY -= 25 * multiplier;
+        }
+
+        function renderStep() {
+            objects.forEach((object) => object.step());
+
+            if (Math.abs(lastSpawn - plane.x) > 70) {
+                lastSpawn = plane.x;
+                let [x, y] = [plane.x + config.containerWidth + Math.round(Math.random() * 50), plane.y + (Math.round(Math.random() * 2) - 1 ) * Math.round(Math.random() * config.containerHeight * 2)];
+                if (Math.abs(plane.y - y) > 75) {
+                    if (y > config.clouds[0] && y < config.clouds[1] && (Math.round(2 * Math.random())) == 1) {
+                        new Cloud(x, y);
+                        return
+                    }
+                    if (y > config.asteroids[0] && y < config.asteroids[1] && (Math.round(2 * Math.random())) == 1) {
+                        new Asteroid(x, y);
+                        return
+                    }
+                    if (Math.abs((config.containerHeight - 170) - plane.y) < 100 && (Math.round(Math.random() * 4)) == 1) {
+                        new Bush(x, config.containerHeight - 140);
+                        return
+                    }
+                    if (Math.round(Math.random()) == 1 && y < 0) {
+                        new Balloon(x, y);
+                        return
+                    }
+                }
+            }
+
+            floor.style.top = config.containerHeight - camera.yOffset + camera.shakeY - 70 + "px";
+
+            let brightness = 1.7 - clamp(-(plane.y - config.containerHeight) / 3000, 0.7, 1);
+            container.style.webkitFilter = "brightness(" + brightness * 100 + "%)";
+
+            document.getElementById("CashDisplay").innerHTML = "€ " + gameplay.cash.toFixed(1);
+            document.getElementById("DistanceDisplay").innerHTML =  Math.round(plane.x / 100).toFixed(1) + "ft";
+            document.getElementById("CostDisplayAero").innerHTML = "€ " + gameplay.upgradeCostAero.toFixed(1);
+            document.getElementById("CostDisplaySpeed").innerHTML = "€ " + gameplay.upgradeCostSpeed.toFixed(1);
+        }
+
+        function keydown(event) {
+            userinput[event.key] = true;
+
+            if (event.key == " " && plane.launched == false) {
+                plane.launched = true;
+                sleep(400).then(() => {
+                    speedBar.style.visibility = "hidden";
+                    plane.anchored = false;
+                    plane.thrust = (80 * (arrowProgress / 0.8)) + 10;
+                    applyBoost(arrowProgress / 1.2);
+                });
+            } else {
+                if (event.key == " " && plane.launched == true) {
+                    restart();
+                }
+            }
+        }
+
+        function moveArrow() {
+            if (plane.anchored && plane.launched == false) {
+                let arrow = document.getElementsByClassName("Arrow")[0];
+                arrowProgress = (Math.sin(Date.now() / 300) + 1) / 2.4;
+
+                arrow.style.left = arrowProgress * 100 + "%";
+            }
+        }
+
+        function keyup(event) {
+            userinput[event.key] = false;
+        }
+
+        function updateBackground() {
+            const xOffsetPixels = camera.xOffset;
+            const yOffsetPixels = camera.yOffset;
+            container.style.backgroundPosition = `${-xOffsetPixels / 2.5}px ${-yOffsetPixels / 2.5}px`;
+            floor.style.backgroundPosition = `${-xOffsetPixels / 1.5}px`;
+        }
+
+        function startSimulation() {
+            container = document.getElementsByClassName("Container")[0];
+            speedBar = document.getElementsByClassName("SpeedBar")[0];
+            gameOver = document.getElementsByClassName("GameOver")[0];
+            floor = document.getElementsByClassName("Floor")[0];
+            container.style.width = config.containerWidth + "px";
+            container.style.height = config.containerHeight + "px";
+            floor.style.height = "70px";
+            floor.style.width = config.containerWidth + "px";
+            gameOver.style.visibility = "hidden";
+
+            plane = new Plane(50, config.containerHeight / 2);
+            
+            setInterval(renderStep, 1000 / config.fps);
+            setInterval(moveArrow, 1000 / config.fps);
+
+            document.getElementById("SpeedUpgrade").addEventListener("click", () => {
+                if (gameplay.cash >= gameplay.upgradeCostSpeed) {
+                    gameplay.cash -= gameplay.upgradeCostSpeed;
+                    upgradeMaxSpeed();
+                }
+            });
+            document.getElementById("AerodynamicsUpgrade").addEventListener("click", () => {
+                if (gameplay.cash >= gameplay.upgradeCostAero) {
+                    gameplay.cash -= gameplay.upgradeCostAero;
+                    upgradeAerod();
+                }
+            });
+            document.getElementById("RestartButton").addEventListener("click", () => {
+                restart();
+            });
+        }
+
+        document.addEventListener("keydown", keydown);
+        document.addEventListener("keyup", keyup);
+        document.addEventListener("DOMContentLoaded", startSimulation);
+    </script>
+    <style>
+        @font-face { font-family: Comic; src: url('COMIC.TTF'); }
+        body {
+            background-color: rgb(255, 255, 255);
+            background-size: 100% 50%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center; 
+            margin: 0;
+            min-height: 100vh;
+        }
+        .Container {
+            background-image: url("images/Texture.jpg");
+            background-color: rgb(255, 0, 0);
+            filter: brightness(100%);
+            background-size: 75%;
+            background-position: center; 
+            background-repeat: repeat;
+            position: relative;
+            overflow: hidden;
+            border-radius: 0%;
+        }
+        .Floor {
+            background-color: rgb(92, 77, 64);
+            background-image: url("images/Floor.png");
+            filter: opacity(100%);
+            background-size: 50%;
+            background-position: center; 
+            background-repeat: repeat;
+            position: relative;
+            overflow: hidden;
+            border-radius: 0%;
+        }
+        .RestartButton {
+            position: absolute;
+            background-image: url("images/Restart.png");
+            width: 75px;
+            height: 75px;
+            top: 40px;
+            left: 10px;
+            z-index: 99;
+        }
+        .CashDisplay {
+            position: absolute;
+            background-image: url("images/Box.png");
+            width: 130px;
+            height: 75px;
+            top: 0px;
+            left: 85px;
+            z-index: 99;
+            font-family: Comic;
+            font-size: 24px;
+            color: rgb(74, 77, 82);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .DistanceDisplay {
+            position: absolute;
+            background-image: url("images/Box.png");
+            width: 130px;
+            height: 75px;
+            top: 0px;
+            left: 210px;
+            z-index: 99;
+            font-family: Comic;
+            font-size: 24px;
+            color: rgb(74, 77, 82);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .CostDisplaySpeed {
+            position: absolute;
+            background-image: url("images/Box.png");
+            width: 130px;
+            height: 75px;
+            top: 390px;
+            left: 450px;
+            z-index: 99;
+            font-family: Comic;
+            font-size: 24px;
+            color: rgb(74, 77, 82);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .CostDisplayAero {
+            position: absolute;
+            background-image: url("images/Box.png");
+            width: 130px;
+            height: 75px;
+            top: 500px;
+            left: 450px;
+            z-index: 99;
+            font-family: Comic;
+            font-size: 24px;
+            color: rgb(74, 77, 82);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .GameOver {
+            position: absolute;
+            background-image: url("images/GameOver.png");
+            width: 675px;
+            background-size: 100%;
+            height: 825px;
+            top: 25px;
+            left: 263px;
+            z-index: 99;
+        }
+        .Distance {
+            position: absolute;
+            width: 50px;
+            height: 50px;
+            top: 270px;
+            left: 400px;
+            font-family: Comic;
+            font-size: 24px;
+            color: rgb(74, 77, 82);
+        }
+        .CashMultiplier {
+            position: absolute;
+            width: 50px;
+            height: 50px;
+            top: 315px;
+            left: 320px;
+            font-family: Comic;
+            font-size: 24px;
+            color: rgb(74, 77, 82);
+        }
+        .Cash {
+            position: absolute;
+            width: 50px;
+            height: 50px;
+            top: 315px;
+            left: 400px;
+            font-family: Comic;
+            font-size: 24px;
+            color: rgb(74, 77, 82);
+        }
+        .SpeedUpgrade {
+            position: absolute;
+            background-image: url("images/MaxSpeed.png");
+            width: 335px;
+            height: 120px;
+            top: 390px;
+            left: 150px;
+        }
+        .AerodynamicsUpgrade {
+            position: absolute;
+            background-image: url("images/Aerodynamics.png");
+            width: 335px;
+            height: 120px;
+            top: 500px;
+            left: 150px;
+        }
+        .ObjectBase {
+            position: absolute;
+        }
+        .SpeedBar {
+            position: absolute;
+            background-image: url("images/Bar.png");
+            width: 260px;
+            background-size: 100%;
+            height: 100px;
+            top: 400px;
+            left: 50px;
+            z-index: 99;
+        }
+        .Arrow {
+            position: absolute;
+            background-image: url("images/Arrow.png");
+            width: 60px;
+            background-size: 100%;
+            height: 75px;
+            top: 75px;
+            left: 80%;
+            z-index: 100;
+        }
+    </style>
+    <body>
+        <div class="Container">
+            <div class="Floor"></div>
+            <p class="CashDisplay" id="CashDisplay">10</p>
+            <p class="DistanceDisplay" id="DistanceDisplay">10</p>
+            <div class="RestartButton" id="RestartButton"></div>
+            <div class="GameOver">
+                <p class="Distance" id="Distance">10</p>
+                <p class="CashMultiplier" id="CashMultiplier">10</p>
+                <p class="Cash" id="Cash">10</p>
+                <div class="SpeedUpgrade" id="SpeedUpgrade"></div>
+                <div class="AerodynamicsUpgrade" id="AerodynamicsUpgrade"></div>
+                <p class="CostDisplaySpeed" id="CostDisplaySpeed">10</p>
+                <p class="CostDisplayAero" id="CostDisplayAero">10</p>
+            </div>
+            <div class="SpeedBar">
+                <div class="Arrow"></div>
+            </div>
+        </div>
+    </body>
+</html>
