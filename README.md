@@ -39,7 +39,7 @@ In PaperSkies, you pilot a paper airplane through a hand-crafted world:
 PaperSkies-AstroHacks-2024/
  ├── images/        # Hand-drawn scanned assets
  ├── index.html     # Main game file
- ├── Comic.ttf      # Custom font
+ ├── comic.ttf      # Custom font
  └── README.md      # You are here
 ```
 
