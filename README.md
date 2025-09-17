@@ -1,6 +1,6 @@
 # PaperSkies ✈️ – AstroHacks 2024
 
-**Best Execution Award – Irvine AstroHacks 2024**
+**Best Execution Award – AstroHacks 2024**
 
 PaperSkies is a JavaScript-based browser game built in just **12 hours** during a regional hackathon with \~70 contestants. All of the game’s assets were **hand-drawn on lined notebook paper**, photographed, and then digitized to bring a unique sketchbook style to life.
 
