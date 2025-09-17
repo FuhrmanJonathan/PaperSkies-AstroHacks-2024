@@ -29,7 +29,7 @@ In PaperSkies, you pilot a paper airplane through a hand-crafted world:
 * **Event:** [AstroHacks 2024 – Irvine, CA](https://astrohacks.org)
 * **Duration:** 12 hours
 * **Team size:** 2 members
-* **Award:** 🏆 *Best Execution*
+* **Award:** *Best Execution*
 
 ---
 
