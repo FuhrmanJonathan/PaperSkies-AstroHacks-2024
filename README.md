@@ -33,7 +33,7 @@ In PaperSkies, you pilot a paper airplane through a hand-crafted world:
 
 ---
 
-## 📂 Repository Structure
+## Repository Structure
 
 ```
 PaperSkies-AstroHacks-2024/
